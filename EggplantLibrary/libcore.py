@@ -1,20 +1,19 @@
+from . import utils
 from datetime import datetime
 import inspect
 import xmlrpc.client
 import os
 
 import robot.api.logger as log
-from robot.libraries.BuiltIn import BuiltIn
+from robot.libraries.BuiltIn import BuiltIn, RobotNotRunningError
 
 draw_rects_on_screenshots = True
 try:
     from PIL import Image, ImageDraw
 except ModuleNotFoundError as e:
-    log.warn(f"Pillow not found, drawing rectangles on screenshots is disabled: {e}."    
-    " Install using: 'pip install Pillow'.")
+    log.warn(f"Pillow not found, drawing rectangles on screenshots is disabled: {e}."
+             " Install using: 'pip install Pillow'.")
     draw_rects_on_screenshots = False
-
-from . import utils
 
 
 class EggplantExecutionException(Exception):
@@ -28,12 +27,12 @@ class EggplantLibDynamicCore:
     def __init__(self, suite='', host='', port='', scripts_dir=''):
         """
         Each library import is bound to a single *eggPlant test suite* and to an *eggPlant instance running in the eggDrive mode*.
-        
+
         No actual XML RPC connection is established during the import, so there is no must to start eggPlant in advance.   
-        
+
         The library needs a file access to the ``.suite`` folder in order to build the list of keywords (i.e. eggPlant ``.script`` files)
         and get their arguments and documentation.
-        
+
         == Import examples ==
         | Library | EggplantLibrary | suite=E:/eggPlantScripts/SuiteOne.suite | host=http://127.0.0.1 | port=5400 |
         | Library | EggplantLibrary | # Import without parameters needs `EggplantLib.config` in the library package dir |
@@ -44,7 +43,7 @@ class EggplantLibDynamicCore:
 
         In this case library looks for it's value in the *config file* (`EggplantLib.config`) in the library package dir.
         If no value found in the config file (or no file exists), the default value is used.
-        
+
         === suite ===
         Path to the eggPlant `.suite` file.
         - The default value is a first `.suite` file in the library folder.
@@ -71,14 +70,17 @@ class EggplantLibDynamicCore:
         # Get all params from the library import string first.
         # If some of the empty, try to look in a config file.
         # If nothing found, use default values
-        params = {'host': 'http://127.0.0.1', 'port': '5400', 'scripts_dir': 'Scripts', 'suite': suite}  # defaults
+        params = {'host': 'http://127.0.0.1', 'port': '5400',
+                  'scripts_dir': 'Scripts', 'suite': suite}  # defaults
         for p_key in params:
-            if locals()[p_key] == '':  # if parameter value passed to the lib constructor is empty..
+            # if parameter value passed to the lib constructor is empty..
+            if locals()[p_key] == '':
                 value_from_config = self.read_from_config(p_key)
                 if value_from_config != '':
                     params[p_key] = value_from_config
             else:
-                params[p_key] = locals()[p_key]  # otherwise set the passed argument value
+                # otherwise set the passed argument value
+                params[p_key] = locals()[p_key]
 
         uri = params['host'] + ":" + params['port']
         self.eggplant_server = xmlrpc.client.ServerProxy(uri)
@@ -91,17 +93,20 @@ class EggplantLibDynamicCore:
         if self.eggplant_suite == '':
             for name in os.listdir(this_dir):
                 if name.endswith(".suite"):
-                    self.eggplant_suite = os.path.abspath(os.path.join(this_dir, name))
+                    self.eggplant_suite = os.path.abspath(
+                        os.path.join(this_dir, name))
                     break
         # otherwise suite path is set, but make sure it's absolute
         else:
             if not os.path.isabs(self.eggplant_suite):
-                self.eggplant_suite = os.path.abspath(os.path.join(this_dir, self.eggplant_suite))
+                self.eggplant_suite = os.path.abspath(
+                    os.path.join(this_dir, self.eggplant_suite))
 
         # TODO: if the eggPlant runs on a remote server, the test suite dir will be remote as well! How access it?
 
         # the default directory with keywords (=eggPlant scripts) is 'Scripts' inside the eggPlant test suite
-        self.keywords_dir = os.path.join(self.eggplant_suite, params['scripts_dir'])
+        self.keywords_dir = os.path.join(
+            self.eggplant_suite, params['scripts_dir'])
 
         # For video recording
         self.current_movie_path = None
@@ -121,9 +126,27 @@ class EggplantLibDynamicCore:
         keywords = []
 
         # get static keywords first - from this library class only
-        for name in dir(self):
-            if self.get_static_keyword(name):
-                keywords.append(name)
+        try:
+            all_libs = BuiltIn().get_library_instance(all=True)
+        except RobotNotRunningError as e:
+            log.warn(
+                "Robot is not running. If this occurs during static code analysis this is fine.")
+            log.debug("Failed to load all libraries: {}".format(e))
+            all_libs = []
+
+        eggplant_lib = None
+        for lib in all_libs.values():
+            if lib.__class__.__name__ == 'EggplantLibrary':
+                eggplant_lib = lib
+                break
+
+        if eggplant_lib:
+            log.debug(
+                "There is at least 1 other Eggplant library instance. Skip importing static keywords for avoiding duplicate keywords.")
+        else:
+            for name in dir(self):
+                if self.get_static_keyword(name):
+                    keywords.append(name)
 
         # now fetch eggPlant scripts and add them as keywords - from all subfolders
         self.get_scripts_from_folder(self.keywords_dir, keywords)
@@ -163,9 +186,11 @@ class EggplantLibDynamicCore:
             # Failure in parsed result string
             except EggplantExecutionException as e:
                 search_rect = self.log_ocr_debug_info(str(e))
-                screenshot = self.take_screenshot(highlight_rectangle=search_rect, error_if_no_sut=False)
+                screenshot = self.take_screenshot(
+                    highlight_rectangle=search_rect, error_if_no_sut=False)
                 if self.current_movie_path:
-                    self.log_embedded_video(self.current_movie_path, screenshot)
+                    self.log_embedded_video(
+                        self.current_movie_path, screenshot)
                 elif screenshot:
                     self.log_embedded_image(screenshot)
 
@@ -177,7 +202,8 @@ class EggplantLibDynamicCore:
                                                                                                  e.faultString))
                 screenshot = self.take_screenshot(error_if_no_sut=False)
                 if self.current_movie_path:
-                    self.log_embedded_video(self.current_movie_path, screenshot)
+                    self.log_embedded_video(
+                        self.current_movie_path, screenshot)
                 else:
                     self.log_embedded_image(screenshot)
                 raise e
@@ -205,7 +231,8 @@ class EggplantLibDynamicCore:
         if static_keyword:
             result = inspect.getdoc(static_keyword)
         else:
-            if name in ['__init__', '__intro__']:  # standard RF library specification, needed e.g. in RED
+            # standard RF library specification, needed e.g. in RED
+            if name in ['__init__', '__intro__']:
                 method = getattr(self, name, False)
                 if method:
                     result = inspect.getdoc(method)
@@ -264,7 +291,8 @@ class EggplantLibDynamicCore:
                 result_list.append("**" + kwargs)
 
         else:  # otherwise it's an eggPlant script
-            log.debug("Reading arguments from eggPlant script file: {}".format(name))
+            log.debug(
+                "Reading arguments from eggPlant script file: {}".format(name))
 
             with open(self.get_script_file_path(name), encoding="utf8") as f:
                 # look for a line with params, it must be at the file top, but might appear after comments
@@ -273,33 +301,41 @@ class EggplantLibDynamicCore:
                 # we don't want to scan all scripts to the very bottom, if there are no params at all!
                 # params can be preceded only by comments and empty lines
                 # so we skip all top empty lines and expect params at the first line after the comments - otherwise exit
-                comment_lines_length = len(self.get_top_comments(name).splitlines())
+                comment_lines_length = len(
+                    self.get_top_comments(name).splitlines())
                 line_counter = 0
 
                 for line in f:
                     log.debug("Line: {}".format(line))
 
-                    stripped_line = utils.remove_unreadable_characters_at_start(line)
+                    stripped_line = utils.remove_unreadable_characters_at_start(
+                        line)
                     if stripped_line == "":
                         continue  # skip top empty lines
 
                     line_counter += 1
-                    if str.lower(stripped_line).startswith(params_str_start):  # look for "params " case insensitive
+                    # look for "params " case insensitive
+                    if str.lower(stripped_line).startswith(params_str_start):
                         # found
                         args = []
-                        split = stripped_line[len(params_str_start):].split(',')
+                        split = stripped_line[len(
+                            params_str_start):].split(',')
                         for item in split:
                             arg_string = str(item).strip()
                             argument_tuple = (arg_string,)
                             default_value_separator = ":"
                             if default_value_separator in arg_string:  # default value available
-                                arg_name = arg_string.split(default_value_separator)[0]
-                                arg_default_value = arg_string.split(default_value_separator)[1]
+                                arg_name = arg_string.split(
+                                    default_value_separator)[0]
+                                arg_default_value = arg_string.split(
+                                    default_value_separator)[1]
                                 # try to convert the default value to one of supported data types
-                                arg_default_value = utils.convert_to_num_bool_or_string(arg_default_value)
+                                arg_default_value = utils.convert_to_num_bool_or_string(
+                                    arg_default_value)
                                 # so it's a string - remove possible double quotes
                                 if isinstance(arg_default_value, str):
-                                    arg_default_value = arg_default_value.replace('"', '')
+                                    arg_default_value = arg_default_value.replace(
+                                        '"', '')
                                 argument_tuple = (arg_name, arg_default_value)
                             args.append(argument_tuple)
                         result_list = args
@@ -315,14 +351,17 @@ class EggplantLibDynamicCore:
         result = None
         static_keyword = self.get_static_keyword(name)
         if static_keyword:
-            result_path = os.path.abspath(inspect.getsourcefile(static_keyword))
+            result_path = os.path.abspath(
+                inspect.getsourcefile(static_keyword))
             result_line = inspect.getsourcelines(static_keyword)[1]
             result = f"{result_path}:{result_line}"
         else:
-            if name in ['__init__', '__intro__']:  # standard RF library specification, needed e.g. in RED
+            # standard RF library specification, needed e.g. in RED
+            if name in ['__init__', '__intro__']:
                 method = getattr(self, name, False)
                 if method:
-                    result = os.path.abspath(inspect.getsourcefile(method)) + ":1"
+                    result = os.path.abspath(
+                        inspect.getsourcefile(method)) + ":1"
             else:
                 result = self.get_script_file_path(name) + ":1"
 
@@ -344,16 +383,19 @@ class EggplantLibDynamicCore:
             log.debug("Processing argument: {}".format(arg))
             arg_f = arg
 
-            if isinstance(arg_f, str):  # if the parameter is a string, it might need quotes..
+            # if the parameter is a string, it might need quotes..
+            if isinstance(arg_f, str):
                 # convert all new line and return characters to eggPlant format
                 arg_f = arg_f.replace("\n", "\" & return & \"")
                 arg_f = arg_f.replace("\r", "\" & return & \"")
 
                 if not (arg_f.startswith("(") and arg_f.endswith(")")):  # lists don't need quotes
-                    if not (arg_f.startswith("\"") and arg_f.endswith("\"")):  # no quotes for already quoted string
+                    # no quotes for already quoted string
+                    if not (arg_f.startswith("\"") and arg_f.endswith("\"")):
                         arg_f = "\"" + format(arg_f) + "\""
 
-            if isinstance(arg, list):   # eggPlant doesn't understand single quotes (') around list values
+            # eggPlant doesn't understand single quotes (') around list values
+            if isinstance(arg, list):
                 arg_f = utils.single_quote_to_double(arg)
             log.debug("Formatted argument: {}".format(arg_f))
             command = "{} {},".format(command, arg_f)
@@ -424,17 +466,21 @@ class EggplantLibDynamicCore:
             eggdrive_command_duration = returned_string['Duration']
             eggplant_script_duration = result_section['Duration']
             if eggdrive_command_duration and eggplant_script_duration:
-                execution_delay = float(eggdrive_command_duration) - float(eggplant_script_duration)
-                log.debug(f"eggdrive execution delay: {execution_delay:.2f} seconds")
+                execution_delay = float(
+                    eggdrive_command_duration) - float(eggplant_script_duration)
+                log.debug(
+                    f"eggdrive execution delay: {execution_delay:.2f} seconds")
                 if execution_delay > 30:
-                    log.warn(f"eggdrive execution delay too high (>30 s): {execution_delay:.2f} seconds")
+                    log.warn(
+                        f"eggdrive execution delay too high (>30 s): {execution_delay:.2f} seconds")
                     log.info("eggdrive execution delay - difference between eggdrive XML-RPC command duration "
                              "and eggPlant script duration")
 
             return_value = result_section['ReturnValue']
             status = result_section['Status']
             if status != "Success" and exception_on_failure:
-                raise EggplantExecutionException(result_section['ErrorMessage'])
+                raise EggplantExecutionException(
+                    result_section['ErrorMessage'])
 
         log.info("Return value: {}".format(return_value))
         return return_value
@@ -473,14 +519,16 @@ class EggplantLibDynamicCore:
             if current_prefix != "":
                 current_prefix += "."
             if item.endswith(".script"):
-                if not item.startswith('_'):  # don't add technical/internal scripts
+                # don't add technical/internal scripts
+                if not item.startswith('_'):
                     script_name = current_prefix + str(item.split('.')[0])
                     result_list.append(script_name)
             else:
                 item_path = os.path.join(folder, item)
                 if os.path.isdir(item_path):
                     new_prefix = current_prefix + item
-                    self.get_scripts_from_folder(item_path, result_list, new_prefix)
+                    self.get_scripts_from_folder(
+                        item_path, result_list, new_prefix)
         return result_list
 
     def get_script_file_path(self, name):
@@ -492,7 +540,8 @@ class EggplantLibDynamicCore:
         """
         name_with_replaced_dots = name.replace(".", "/")
         # the "." is replaced because of scripts in subfolders
-        filepath = os.path.join(self.keywords_dir, name_with_replaced_dots + ".script")
+        filepath = os.path.join(
+            self.keywords_dir, name_with_replaced_dots + ".script")
         return filepath
 
     def get_top_comments(self, script_name):
@@ -509,7 +558,8 @@ class EggplantLibDynamicCore:
         multiline_comment_start = '(*'
         multiline_comment_end = '*)'
 
-        log.debug("Reading top comments from eggPlant script file: {}".format(script_name))
+        log.debug(
+            "Reading top comments from eggPlant script file: {}".format(script_name))
 
         result = ""
 
@@ -519,12 +569,14 @@ class EggplantLibDynamicCore:
 
                 log.debug("Line: {}".format(line))
 
-                stripped_line = utils.remove_unreadable_characters_at_start(line)
+                stripped_line = utils.remove_unreadable_characters_at_start(
+                    line)
 
                 if stripped_line == "":  # empty lines at file start are allowed
                     continue
 
-                if stripped_line.startswith(multiline_comment_end):  # in case "*)" stays alone in a last line
+                # in case "*)" stays alone in a last line
+                if stripped_line.startswith(multiline_comment_end):
                     result += "\n"
                     inside_multiline_comment = False
                     continue  # maybe there are furthermore comments?
@@ -533,7 +585,8 @@ class EggplantLibDynamicCore:
                     # maybe it's the last comment line with '*)' in the end?
                     if stripped_line.endswith(multiline_comment_end):
                         inside_multiline_comment = False
-                        stripped_line = stripped_line.removesuffix(multiline_comment_end)
+                        stripped_line = stripped_line.removesuffix(
+                            multiline_comment_end)
                     result += stripped_line + "\n"
                     continue  # maybe there are furthermore comments?
 
@@ -542,22 +595,26 @@ class EggplantLibDynamicCore:
                 for comment_starter in line_comment_start_chars:
                     if stripped_line.startswith(comment_starter):
                         single_comment_found = True
-                        result += stripped_line.removeprefix(comment_starter) + "\n"
+                        result += stripped_line.removeprefix(
+                            comment_starter) + "\n"
                         break  # exit the inner loop through single line comment start characters
                 if single_comment_found:
                     continue
 
                 # try to check the multiline comments otherwise
                 if stripped_line.startswith(multiline_comment_start):
-                    stripped_line = stripped_line.removeprefix(multiline_comment_start)
+                    stripped_line = stripped_line.removeprefix(
+                        multiline_comment_start)
                     if stripped_line.endswith(multiline_comment_end):
-                        stripped_line = stripped_line.removesuffix(multiline_comment_end)
+                        stripped_line = stripped_line.removesuffix(
+                            multiline_comment_end)
                     else:
                         inside_multiline_comment = True
                     result += stripped_line + "\n"
                     continue
 
-                result = result[:result.rfind("\n")]  # remove the last new line character
+                # remove the last new line character
+                result = result[:result.rfind("\n")]
                 break  # no comment chars found - means we don't need to go further
         return result
 
@@ -577,7 +634,8 @@ class EggplantLibDynamicCore:
         search_rect = ''
 
         if search_rect_text in exception_text:
-            search_rect = exception_text[exception_text.index(search_rect_text) + len(search_rect_text):].strip()
+            search_rect = exception_text[exception_text.index(
+                search_rect_text) + len(search_rect_text):].strip()
             if ocr_text in exception_text:
                 log.info("----> Performing OCR ReadText in the restricted search rectangle: {0}.\n"
                          "For results see the command output further in the log.\n-----\n"
@@ -629,13 +687,16 @@ class EggplantLibDynamicCore:
         target_path = file_path
 
         if not file_path:
-            target_path = "Screenshots\\Screenshot__{0}.png".format(datetime.now().strftime('%Y-%m-%d__%H_%M_%S__%f'))
+            target_path = "Screenshots\\Screenshot__{0}.png".format(
+                datetime.now().strftime('%Y-%m-%d__%H_%M_%S__%f'))
 
         if target_path and os.path.isabs(target_path):
-            raise RuntimeError("Given file_path='%s' must be relative to Robot output dir" % target_path)
+            raise RuntimeError(
+                "Given file_path='%s' must be relative to Robot output dir" % target_path)
 
         # image output file path is relative to robot framework output
-        full_path = os.path.join(BuiltIn().get_variable_value("${OUTPUT DIR}"), target_path)
+        full_path = os.path.join(
+            BuiltIn().get_variable_value("${OUTPUT DIR}"), target_path)
         if not os.path.exists(os.path.split(full_path)[0]):
             os.makedirs(os.path.split(full_path)[0])
 
@@ -649,7 +710,8 @@ class EggplantLibDynamicCore:
 
         try:
             # Capture and save the image of the whole SUT screen
-            self.eggplant_server.execute("CaptureScreen(Name:\"{0}\", {1})".format(full_path, rectangle_string))
+            self.eggplant_server.execute(
+                "CaptureScreen(Name:\"{0}\", {1})".format(full_path, rectangle_string))
             if highlight_rectangle:
                 log.info(highlight_rectangle)
                 self.draw_rect_on_image(full_path, highlight_rectangle)
@@ -667,9 +729,10 @@ class EggplantLibDynamicCore:
 
         return target_path
 
-    def draw_rect_on_image(self, image_file, coordinates, color='red'):        
-        log.debug("Draw a {} rectangle with coordinates {} for image {}".format(color, coordinates, image_file))
-        
+    def draw_rect_on_image(self, image_file, coordinates, color='red'):
+        log.debug("Draw a {} rectangle with coordinates {} for image {}".format(
+            color, coordinates, image_file))
+
         if not draw_rects_on_screenshots:
             log.debug("Drawing rectangles disabled, check if Pillow is installed")
             return
@@ -708,10 +771,12 @@ class EggplantLibDynamicCore:
         preview = ""
         if preview_image_path:
             preview_image_name = os.path.basename(preview_image_path)
-            log.info(html=True, msg=f'Screenshot: <a href="{preview_image_path}">{preview_image_name}</a>')
+            log.info(
+                html=True, msg=f'Screenshot: <a href="{preview_image_path}">{preview_image_name}</a>')
             preview = f'poster="{preview_image_path}"'
 
         video_name = os.path.basename(video_path)
-        log.info(f'Video file path: <a href="{video_path}">{video_name}</a>', html=True)
+        log.info(
+            f'Video file path: <a href="{video_path}">{video_name}</a>', html=True)
         log.info(html=True, msg=f'<tr><video {preview} height="350px" controls> <source src="{video_path}"'
                                 f' type="video/mp4">Browser does not support video.</video></tr>')
