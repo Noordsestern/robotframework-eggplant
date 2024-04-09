@@ -132,7 +132,7 @@ class EggplantLibDynamicCore:
             log.warn(
                 "Robot is not running. If this occurs during static code analysis this is fine.")
             log.debug("Failed to load all libraries: {}".format(e))
-            all_libs = []
+            all_libs = {}
 
         eggplant_lib = None
         for lib in all_libs.values():
