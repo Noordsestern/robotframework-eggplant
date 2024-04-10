@@ -124,7 +124,7 @@ class EggplantLibDynamicCore:
         self.eggplant_keywords: dict[str, str] = dict()
         self.all_keywords: list[str] = list()
 
-        log.warn("Initiated Eggplant library")
+        log.debug("Initiated Eggplant library")
 
     def __fetch_eggplant_keywords(self):
         """
