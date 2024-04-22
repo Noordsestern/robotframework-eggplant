@@ -423,6 +423,12 @@ class EggplantLibDynamicCore:
                     is returned. Otherwise the 'Result' value of the XML RPC response is returned directly,
                     although it might be a result of a previous script.
         """
+
+        # if the command is not a connect or disconnect command, open a session first
+        # TODO: only open session, if there is no session open
+        if not command.startswith("connect") and not command.startswith("disconnect"):
+            self.run_keyword("open session")
+
         log.info("Send command to eggPlant server: '{}'".format(command))
 
         returned_string = self.eggplant_server.execute(command)
