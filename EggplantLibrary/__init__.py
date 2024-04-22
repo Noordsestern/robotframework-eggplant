@@ -68,7 +68,7 @@ class EggplantLibrary(EggplantLibDynamicCore):
         The `rectangle` (optional) is a list of 2 values (top left, bottom right) in eggPlant format
             indicating a rectangle to capture.
             Each value might be a list of two coordinates, an image name or an image location.
-        
+
         If `highlight_rectangle` is provided, an additional frame is drawn on the taken screenshot.
         The coordinates are passed as a string of four values: *x0, y0, x1, y1*
 
@@ -85,7 +85,8 @@ class EggplantLibrary(EggplantLibDynamicCore):
         for details.            
         """
 
-        screenshot_path = self.take_screenshot(rectangle, file_path, highlight_rectangle, error_if_no_sut_connection)
+        screenshot_path = self.take_screenshot(
+            rectangle, file_path, highlight_rectangle, error_if_no_sut_connection)
         self.log_embedded_image(screenshot_path)
 
     @keyword
@@ -98,7 +99,7 @@ class EggplantLibrary(EggplantLibDynamicCore):
         a result of a previous script.
 
         The `command` is a string in the eggDrive format. Quotes have to be escaped.
-        
+
         Examples:
         | Run Command | myScript arg1, arg2 |
         | Run Command | click \\"someImage\\" |
@@ -116,7 +117,7 @@ class EggplantLibrary(EggplantLibDynamicCore):
 
         The `suite` parameter (optional) is a path to the eggPlant `.suite` file which session is to open.
         If not specified, the default suite is taken, which was set during library init/import.
-        
+
         By default if the is a previously open session, it is closed automatically.
         This can be disabled using the `close_previously_open_session` parameter.
         """
@@ -127,26 +128,27 @@ class EggplantLibrary(EggplantLibDynamicCore):
         try:
             out = self.eggplant_server.startsession(s)
             log.debug(out)
-            
+
         except xmlrpc.client.Fault as e:
             if close_previously_open_session and "BUSY: Session in progress" in e.faultString:
-                    log.info("Old session busy - close it automatically")
-                    self.close_session()                    
-                    out = self.eggplant_server.startsession(s)
-                    log.debug(out)            
+                log.info("Old session busy - close it automatically")
+                self.close_session()
+                out = self.eggplant_server.startsession(s)
+                log.debug(out)
             else:
                 raise e
-        
+
         except ConnectionRefusedError as e:
             log.info(f"ConnectionRefusedError - {e}")
-            raise Exception("Failed connecting to eggPlant - check it's running in eggDrive mode")
+            raise Exception(
+                "Failed connecting to eggPlant - check it's running in eggDrive mode")
 
         # check eggplant version compatibility first - but only once
         if not self.eggplant_version_checked:
             self.execute(f'if EggplantVersion().eggplant < "{EGGPLANT_VERSION_MIN}" then LogWarning '
                          '!"Incompatible eggplant version detected - [[EggplantVersion().eggplant]]. '
                          f'Min. version required - {EGGPLANT_VERSION_MIN}. '
-                         'See README for more information."')
+                         'See README for more information."', auto_session=False)
             self.eggplant_version_checked = True
 
     @keyword
@@ -167,25 +169,27 @@ class EggplantLibrary(EggplantLibDynamicCore):
             out = self.eggplant_server.endsession(s)
             log.debug(out)
         except xmlrpc.client.Fault as e:
-            log.info("Fault code:{}. Fault string: {}".format(e.faultCode, e.faultString))
+            log.info("Fault code:{}. Fault string: {}".format(
+                e.faultCode, e.faultString))
             if "Can't End Session -- No Session is Active" in e.faultString:
                 log.warn("No open eggPlant session to close!")
             else:
                 raise e
         except ConnectionRefusedError as e:
             log.info(f"ConnectionRefusedError - {e}")
-            raise Exception("Failed connecting to eggPlant - check it's running in eggDrive mode")
+            raise Exception(
+                "Failed connecting to eggPlant - check it's running in eggDrive mode")
 
     @keyword
     def start_movie(self, file_path='', fps=15, compression_rate=1, highlighting=True, extra_time=5):
         """
         Starts video recording into the specified file and returns the absolute path to it.
-        
+
         The `file_path` (optional) is relative to the current Robot Framework output dir.
         If not specified, the default name is used.
 
         The `fps` parameter defines frames per second.
-        
+
         The `compression_rate` adjusts the compression amount of the movie. The value range is (0, 1].
         Set the rate lower to decrease the file size and video quality.
 
@@ -198,13 +202,16 @@ class EggplantLibrary(EggplantLibDynamicCore):
         path = file_path
 
         if not file_path:
-            path = "Movies\\Movie__{0}.mp4".format(datetime.now().strftime('%Y-%m-%d__%H_%M_%S'))
+            path = "Movies\\Movie__{0}.mp4".format(
+                datetime.now().strftime('%Y-%m-%d__%H_%M_%S'))
 
         if path and os.path.isabs(path):
-            raise RuntimeError("Given file_path='%s' must be relative to Robot output dir" % path)
+            raise RuntimeError(
+                "Given file_path='%s' must be relative to Robot output dir" % path)
 
         # image output file path is relative to robot framework output
-        full_path = os.path.join(BuiltIn().get_variable_value("${OUTPUT DIR}"), path)
+        full_path = os.path.join(
+            BuiltIn().get_variable_value("${OUTPUT DIR}"), path)
         if not os.path.exists(os.path.split(full_path)[0]):
             os.makedirs(os.path.split(full_path)[0])
 
@@ -214,7 +221,8 @@ class EggplantLibrary(EggplantLibDynamicCore):
         # and embed it into the RF log
         log.info('Start video recording')
         self.log_embedded_video(path)
-        self.current_movie_path = path  # save it to embed video in the log in case of errors
+        # save it to embed video in the log in case of errors
+        self.current_movie_path = path
         return path
 
     @keyword
@@ -231,7 +239,8 @@ class EggplantLibrary(EggplantLibDynamicCore):
             if self.current_movie_path:
                 self.log_embedded_video(self.current_movie_path)
             else:
-                log.info("Saving video into log failed - current recording file path empty!")
+                log.info(
+                    "Saving video into log failed - current recording file path empty!")
         except xmlrpc.client.Fault as e:
             no_movie_error = 'StopMovie is not allowed -- there is no movie being recorded'
             if no_movie_error in e.faultString:

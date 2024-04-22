@@ -6,6 +6,8 @@ import os
 
 import robot.api.logger as log
 from robot.libraries.BuiltIn import BuiltIn, RobotNotRunningError
+from robot.errors import KeywordError
+from typing import Any
 
 draw_rects_on_screenshots = True
 try:
@@ -23,6 +25,13 @@ class EggplantExecutionException(Exception):
 
 
 class EggplantLibDynamicCore:
+
+    __commands_without_auto_session = ["\"connect\"",
+                                       "\"disconnect\"", "\"open session\""]
+
+    static_keywords: dict[str, Any] = dict()
+    eggplant_keywords: dict[str, str] = dict()
+    all_keywords: list[str] = list()
 
     def __init__(self, suite='', host='', port='', scripts_dir=''):
         """
@@ -123,37 +132,11 @@ class EggplantLibDynamicCore:
 
         :return List of all collected keywords - including static keywords and eggPlant scripts
         """
-        keywords = []
 
-        # get static keywords first - from this library class only
-        try:
-            all_libs = BuiltIn().get_library_instance(all=True)
-        except RobotNotRunningError as e:
-            log.warn(
-                "Robot is not running. If this occurs during static code analysis this is fine.")
-            log.debug("Failed to load all libraries: {}".format(e))
-            all_libs = {}
+        if not self.all_keywords:
+            self.__init_keywords()
 
-        eggplant_lib = None
-        for lib in all_libs.values():
-            if lib.__class__.__name__ == 'EggplantLibrary':
-                eggplant_lib = lib
-                break
-
-        if eggplant_lib:
-            log.debug(
-                "There is at least 1 other Eggplant library instance. Skip importing static keywords for avoiding duplicate keywords.")
-        else:
-            for name in dir(self):
-                if self.get_static_keyword(name):
-                    keywords.append(name)
-
-        # now fetch eggPlant scripts and add them as keywords - from all subfolders
-        self.get_scripts_from_folder(self.keywords_dir, keywords)
-
-        log.debug("Found keywords: {}".format(keywords))
-
-        return keywords
+        return self.all_keywords
 
     def run_keyword(self, name, args):
         """
@@ -169,9 +152,11 @@ class EggplantLibDynamicCore:
         :return The 'ReturnValue' from the 'Result' value of the XML RPC response for eggPlant scripts
                 or the keyword return value in case of static keywords.
         """
-
+        if not self.all_keywords:
+            self.__init_keywords()
         # consider the requested keyword as static first
-        _keyword = self.get_static_keyword(name)
+        _keyword = self.static_keywords.get(name, None)
+
         if _keyword:
             return _keyword(*args)
 
@@ -227,7 +212,7 @@ class EggplantLibDynamicCore:
         """
 
         result = None
-        static_keyword = self.get_static_keyword(name)
+        static_keyword = self.static_keywords.get(name, None)
         if static_keyword:
             result = inspect.getdoc(static_keyword)
         else:
@@ -253,7 +238,7 @@ class EggplantLibDynamicCore:
         result_list = []
 
         # consider the requested keyword as static first
-        static_keyword = self.get_static_keyword(name)
+        static_keyword = self.static_keywords.get(name, None)
         if static_keyword:
             fullargs = inspect.getfullargspec(static_keyword)
             args = fullargs[0]
@@ -294,7 +279,13 @@ class EggplantLibDynamicCore:
             log.debug(
                 "Reading arguments from eggPlant script file: {}".format(name))
 
-            with open(self.get_script_file_path(name), encoding="utf8") as f:
+            eggplant_script = self.eggplant_keywords.get(name, None)
+
+            if not eggplant_script:
+                log.warn(
+                    "Cannot identify arguments for keyword {}. Eggplant script not found".format(name))
+
+            with open(eggplant_script, encoding="utf8") as f:
                 # look for a line with params, it must be at the file top, but might appear after comments
                 params_str_start = "params "
 
@@ -349,7 +340,7 @@ class EggplantLibDynamicCore:
 
     def get_keyword_source(self, name):
         result = None
-        static_keyword = self.get_static_keyword(name)
+        static_keyword = self.static_keywords.get(name, None)
         if static_keyword:
             result_path = os.path.abspath(
                 inspect.getsourcefile(static_keyword))
@@ -363,7 +354,11 @@ class EggplantLibDynamicCore:
                     result = os.path.abspath(
                         inspect.getsourcefile(method)) + ":1"
             else:
-                result = self.get_script_file_path(name) + ":1"
+                eggplant_keyword = self.eggplant_keywords.get(name, None)
+                if not eggplant_keyword:
+                    raise KeywordError(
+                        "Eggplant keyword '{}' not found.".format(name))
+                result = eggplant_keyword + ":1"
 
         return result
 
@@ -404,7 +399,7 @@ class EggplantLibDynamicCore:
         return utils.auto_convert(
             result)  # The result is always a string so we should try to convert it first
 
-    def execute(self, command, parse_result=False, exception_on_failure=True):
+    def execute(self, command, parse_result=False, exception_on_failure=True, auto_session=True):
         """
         Sends the requested command to the eggPlant server via XML RPC.
         The XML RPC response is parsed and logged.
@@ -426,8 +421,9 @@ class EggplantLibDynamicCore:
 
         # if the command is not a connect or disconnect command, open a session first
         # TODO: only open session, if there is no session open
-        if not command.startswith("connect") and not command.startswith("disconnect"):
-            self.run_keyword("open session")
+        if auto_session:
+            if not [is_eggplant_command for is_eggplant_command in self.__commands_without_auto_session if is_eggplant_command in command]:
+                self.run_keyword("open session", ['', True])
 
         log.info("Send command to eggPlant server: '{}'".format(command))
 
@@ -505,7 +501,7 @@ class EggplantLibDynamicCore:
                 return method
         return None
 
-    def get_scripts_from_folder(self, folder, result_list=None, prefix=""):
+    def get_scripts_from_folder(self, folder, prefix="") -> dict[str, str]:
         """
         The function goes recursively through all subfolders and adds names of ".script" files to the result list.
         The subfolder name is added as prefix following by a dot, e.g. "Subfolder.Myscript".
@@ -518,8 +514,7 @@ class EggplantLibDynamicCore:
 
         :return the list of all found ".script" items in all subfolders
         """
-        if result_list is None:
-            result_list = []
+        script_keyword_map: dict[str, str] = {}
         for item in os.listdir(folder):
             current_prefix = prefix
             if current_prefix != "":
@@ -528,16 +523,19 @@ class EggplantLibDynamicCore:
                 # don't add technical/internal scripts
                 if not item.startswith('_'):
                     script_name = current_prefix + str(item.split('.')[0])
-                    result_list.append(script_name)
+                    script_keyword_map[script_name] = folder + "/" + item
             else:
                 item_path = os.path.join(folder, item)
                 if os.path.isdir(item_path):
                     new_prefix = current_prefix + item
-                    self.get_scripts_from_folder(
-                        item_path, result_list, new_prefix)
-        return result_list
+                    subfolder_script_keyword_map = self.get_scripts_from_folder(
+                        item_path, new_prefix)
+                    script_keyword_map = {
+                        **script_keyword_map, **subfolder_script_keyword_map}
+        return script_keyword_map
 
-    def get_script_file_path(self, name):
+    # TODO - remove this method, it's not used
+    def __get_script_file_path(self, name):
         """
         Creates a real eggPlant script file path from the RobotFramewok keyword syntax.
         It replaces dots ('.') with slashes ('/') and builts a file path from the name.
@@ -569,7 +567,12 @@ class EggplantLibDynamicCore:
 
         result = ""
 
-        with open(self.get_script_file_path(script_name), encoding="utf8") as f:
+        eggplant_script = self.eggplant_keywords.get(script_name, None)
+        if not eggplant_script:
+            log.warn("Cannot find top comments for script {}. Eggplant script not found".format(
+                script_name))
+
+        with open(eggplant_script, encoding="utf8") as f:
             inside_multiline_comment = False
             for line in f:
 
@@ -786,3 +789,55 @@ class EggplantLibDynamicCore:
             f'Video file path: <a href="{video_path}">{video_name}</a>', html=True)
         log.info(html=True, msg=f'<tr><video {preview} height="350px" controls> <source src="{video_path}"'
                                 f' type="video/mp4">Browser does not support video.</video></tr>')
+
+    def __fetch_eggplant_keywords(self):
+        """
+        Fetches eggPlant scripts from all subfolders of the specified suite directory
+        and adds them as keywords to the library.
+        """
+        eggplant_keywords = self.get_scripts_from_folder(self.keywords_dir)
+        log.debug("All eggplant keywords: {}".format(eggplant_keywords))
+        return eggplant_keywords
+
+    def __fetch_static_keywords(self):
+        """
+        Fetches static keywords from this library class and adds them to the static_keywords dictionary.
+        """
+        static_keywords = dict()
+        for name in dir(self):
+            method = self.get_static_keyword(name)
+            if method:
+                static_keywords[name] = method
+        log.debug("All static keywords: {}".format(static_keywords))
+        return static_keywords
+
+    def __init_keywords(self):
+        """
+        Initializes all keywords - both static and eggPlant scripts.
+        """
+        try:
+            all_libs = BuiltIn().get_library_instance(all=True)
+        except RobotNotRunningError as e:
+            log.warn(
+                "Robot is not running. If this occurs during static code analysis this is fine.")
+            log.debug("Failed to load all libraries: {}".format(e))
+            all_libs = {}
+
+        eggplant_lib = None
+        for lib in all_libs.values():
+            if lib.__class__.__name__ == 'EggplantLibrary':
+                eggplant_lib = lib
+                break
+
+        if eggplant_lib:
+            log.debug(
+                "There is at least 1 other Eggplant library instance. Skip importing static keywords for avoiding duplicate keywords.")
+        else:
+            self.static_keywords = self.__fetch_static_keywords()
+
+        self.eggplant_keywords = self.__fetch_eggplant_keywords()
+        self.all_keywords = list(
+            self.static_keywords.keys()) + list(self.eggplant_keywords.keys())
+
+        log.debug("Found keywords: {}".format(self.all_keywords))
+        return self.all_keywords
